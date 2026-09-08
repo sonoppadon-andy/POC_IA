@@ -1,0 +1,1365 @@
+<!doctype html>
+<!--
+  ============================================================================
+  Internal Audit Register — Azure Static Web Apps / App Service build
+  ============================================================================
+  ดัดแปลงจากต้นแบบ Claude Artifact ("ia-dashboard.html") ให้อ่าน/เขียนข้อมูล
+  ผ่าน Microsoft Graph API โดยตรง (SharePoint Lists) แทนฐานข้อมูลในตัว Claude
+
+  ก่อนใช้งานจริง ต้องตั้งค่า 3 อย่างก่อน:
+    1. Azure AD App Registration (ดูภาคผนวก 7.4 ในเอกสารสเปก)
+    2. SharePoint Lists ตามโครงสร้างในภาคผนวก 7 (Departments, Categories,
+       AuditPlans, Findings, FindingProgressLog, FindingDueDateHistory)
+    3. แก้ค่าคงที่ในบล็อก CONFIG ด้านล่าง (ค้นหาคำว่า "YOUR_" ในไฟล์นี้)
+
+  โค้ดนี้ยังไม่เคยทดสอบกับ Microsoft Graph API จริง (เขียนจากสเปก REST API
+  เวอร์ชัน v1.0 ที่เผยแพร่อย่างเป็นทางการ) — ทดสอบกับ SharePoint Site แบบ
+  Sandbox ก่อนใช้งานจริงเสมอ ดูรายละเอียด Schema/Deploy เต็มในเอกสาร
+  "สเปกสำหรับทีม Infra/Developer" ที่ส่งให้แยกต่างหาก
+  ============================================================================
+-->
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internal Audit Register</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --paper:#F3F4F9;
+    --surface:#FFFFFF;
+    --surface-2:#FAFAFD;
+    --line:#DFE2ED;
+    --line-soft:#EBEDF5;
+    --ink:#1B2233;
+    --ink-soft:#5B6478;
+    --ink-faint:#8A93A8;
+    --accent:#33417A;
+    --accent-strong:#232E5C;
+    --accent-soft:#E7E9F6;
+    --accent-soft-line:#CBD0EE;
+    --gold:#A9752A;
+    --gold-soft:#F2E6D1;
+    --risk-critical:#9A2B22;
+    --risk-critical-soft:#F7E1DE;
+    --risk-high:#B65A1E;
+    --risk-high-soft:#F8E7D8;
+    --risk-medium:#A67A15;
+    --risk-medium-soft:#F5EAC9;
+    --risk-low:#296A4C;
+    --risk-low-soft:#DCEEE4;
+    --status-open:#5B6478;
+    --status-open-soft:#E8E9EF;
+    --status-progress:#2A5D8F;
+    --status-progress-soft:#DEEAF5;
+    --status-extended:#6E4C8E;
+    --status-extended-soft:#EBE2F2;
+    --status-closed:#296A4C;
+    --status-closed-soft:#DCEEE4;
+    --overdue:#9A2B22;
+    --overdue-soft:#F7E1DE;
+    --shadow-sm:0 1px 2px rgba(27,34,51,.06);
+    --shadow-md:0 6px 20px rgba(27,34,51,.10);
+    --radius:10px;
+    --sidebar-w:236px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#12141C; --surface:#191C27; --surface-2:#1E2230; --line:#2B2F42; --line-soft:#242838;
+      --ink:#E8E9F2; --ink-soft:#A6ACC2; --ink-faint:#767D95;
+      --accent:#7C89D6; --accent-strong:#9AA5E6; --accent-soft:#242C4C; --accent-soft-line:#3B4478;
+      --gold:#D9A94E; --gold-soft:#3A2F1C;
+      --risk-critical:#E28378; --risk-critical-soft:#3B211E;
+      --risk-high:#E2A576; --risk-high-soft:#3B2A19;
+      --risk-medium:#D9BC70; --risk-medium-soft:#372F17;
+      --risk-low:#7FC6A4; --risk-low-soft:#193226;
+      --status-open:#A6ACC2; --status-open-soft:#242838;
+      --status-progress:#7FB2E0; --status-progress-soft:#1B2E40;
+      --status-extended:#BBA0DC; --status-extended-soft:#2C2338;
+      --status-closed:#7FC6A4; --status-closed-soft:#193226;
+      --overdue:#E28378; --overdue-soft:#3B211E;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 10px 28px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#12141C; --surface:#191C27; --surface-2:#1E2230; --line:#2B2F42; --line-soft:#242838;
+    --ink:#E8E9F2; --ink-soft:#A6ACC2; --ink-faint:#767D95;
+    --accent:#7C89D6; --accent-strong:#9AA5E6; --accent-soft:#242C4C; --accent-soft-line:#3B4478;
+    --gold:#D9A94E; --gold-soft:#3A2F1C;
+    --risk-critical:#E28378; --risk-critical-soft:#3B211E;
+    --risk-high:#E2A576; --risk-high-soft:#3B2A19;
+    --risk-medium:#D9BC70; --risk-medium-soft:#372F17;
+    --risk-low:#7FC6A4; --risk-low-soft:#193226;
+    --status-open:#A6ACC2; --status-open-soft:#242838;
+    --status-progress:#7FB2E0; --status-progress-soft:#1B2E40;
+    --status-extended:#BBA0DC; --status-extended-soft:#2C2338;
+    --status-closed:#7FC6A4; --status-closed-soft:#193226;
+    --overdue:#E28378; --overdue-soft:#3B211E;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 10px 28px rgba(0,0,0,.45);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{ margin:0; }
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:'Public Sans', -apple-system, 'Segoe UI', sans-serif;
+    font-size:14px; line-height:1.5;
+  }
+  h1,h2,h3,.display{ font-family:'Fraunces', Georgia, serif; text-wrap:balance; font-weight:600; letter-spacing:-0.01em; }
+  .mono, .tabular{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  a{ color:var(--accent); }
+  button{ font-family:inherit; }
+  ::selection{ background:var(--accent-soft-line); }
+
+  #app{ display:flex; min-height:100vh; }
+
+  .sidebar{
+    width:var(--sidebar-w); flex:none; background:var(--surface); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:20px 14px; gap:22px;
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+  }
+  .brand{ padding:2px 8px; }
+  .brand-eyebrow{ font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .brand-name{ font-family:'Fraunces', serif; font-weight:600; font-size:19px; margin-top:3px; color:var(--ink); }
+  .brand-sub{ font-size:11.5px; color:var(--ink-faint); margin-top:2px; }
+
+  .nav{ display:flex; flex-direction:column; gap:3px; }
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px;
+    color:var(--ink-soft); font-size:13.5px; font-weight:500;
+    cursor:pointer; border:1px solid transparent; text-align:left; background:none; width:100%;
+  }
+  .nav-item svg{ flex:none; opacity:.8; }
+  .nav-item:hover{ background:var(--surface-2); color:var(--ink); }
+  .nav-item.active{ background:var(--accent-soft); color:var(--accent-strong); border-color:var(--accent-soft-line); font-weight:600; }
+  .nav-item.locked{ color:var(--ink-faint); }
+  .nav-lock{ margin-left:auto; opacity:.6; }
+
+  .sidebar-foot{ margin-top:auto; padding:10px 8px 2px; font-size:11px; color:var(--ink-faint); border-top:1px solid var(--line-soft); padding-top:12px; }
+
+  .main{ flex:1; min-width:0; display:flex; flex-direction:column; }
+
+  .topbar{
+    display:flex; align-items:center; gap:14px; padding:14px 26px; border-bottom:1px solid var(--line);
+    background:var(--surface); position:sticky; top:0; z-index:5;
+  }
+  .topbar h1{ font-size:19px; margin:0; }
+  .topbar-spacer{ flex:1; }
+  .year-select{
+    appearance:none; background:var(--surface-2); border:1px solid var(--line);
+    color:var(--ink); padding:7px 30px 7px 12px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235B6478' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+  .who-pill{
+    display:flex; align-items:center; gap:8px; padding:6px 12px 6px 6px; border-radius:20px;
+    background:var(--surface-2); border:1px solid var(--line); font-size:12.5px; color:var(--ink-soft); cursor:pointer;
+  }
+  .who-avatar{
+    width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:10.5px;
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-family:'Public Sans',sans-serif; flex:none;
+  }
+  .who-avatar.admin{ background:var(--gold); }
+  .btn{
+    display:inline-flex; align-items:center; gap:7px; padding:8px 14px; border-radius:8px;
+    font-size:13px; font-weight:600; cursor:pointer; border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    white-space:nowrap;
+  }
+  .btn:hover{ border-color:var(--ink-faint); }
+  .btn-primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn-primary:hover{ background:var(--accent-strong); border-color:var(--accent-strong); }
+  .btn-ghost{ background:none; border-color:transparent; }
+  .btn-ghost:hover{ background:var(--surface-2); border-color:transparent; }
+  .btn-danger{ color:var(--overdue); }
+  .btn-sm{ padding:5px 10px; font-size:12px; }
+  .btn[disabled]{ opacity:.45; cursor:not-allowed; }
+
+  .content{ padding:24px 26px 60px; max-width:1280px; width:100%; margin:0 auto; }
+
+  .banner{
+    display:flex; align-items:flex-start; gap:10px; background:var(--gold-soft); border:1px solid var(--accent-soft-line);
+    color:var(--ink); padding:11px 14px; border-radius:9px; font-size:12.5px; margin-bottom:18px;
+  }
+  .banner b{ color:var(--gold); }
+  .banner .btn{ margin-left:auto; }
+  .banner.error{ background:var(--overdue-soft); border-color:var(--overdue); }
+  .banner.error b{ color:var(--overdue); }
+
+  .stat-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+  .stat-tile{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px; box-shadow:var(--shadow-sm); }
+  .stat-label{ font-size:11.5px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+  .stat-value{ font-family:'Fraunces',serif; font-size:32px; font-weight:600; margin-top:6px; line-height:1; }
+  .stat-value.c-overdue{ color:var(--overdue); }
+  .stat-value.c-progress{ color:var(--status-progress); }
+  .stat-value.c-closed{ color:var(--status-closed); }
+  .stat-note{ font-size:11.5px; color:var(--ink-faint); margin-top:6px; }
+
+  .grid-2{ display:grid; grid-template-columns:1.3fr 1fr; gap:14px; margin-bottom:20px; align-items:stretch; }
+  .panel{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px; box-shadow:var(--shadow-sm); }
+  .panel-head{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .panel-title{ font-size:14px; font-weight:700; }
+  .panel-head .btn{ margin-left:auto; }
+  .segmented{ display:flex; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:2px; gap:2px; }
+  .segmented button{ border:none; background:none; padding:5px 10px; border-radius:6px; font-size:12px; color:var(--ink-soft); cursor:pointer; font-weight:600; }
+  .segmented button.active{ background:var(--surface); color:var(--accent-strong); box-shadow:var(--shadow-sm); }
+
+  .legend{ display:flex; flex-wrap:wrap; gap:10px 16px; margin-top:12px; font-size:11.5px; color:var(--ink-soft); }
+  .legend-item{ display:flex; align-items:center; gap:6px; }
+  .legend-dot{ width:9px; height:9px; border-radius:2px; flex:none; }
+  .legend-dot.round{ border-radius:50%; }
+
+  .badge{ display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:20px; font-size:11.5px; font-weight:600; white-space:nowrap; line-height:1.6; }
+  .badge .dot{ width:6px; height:6px; border-radius:50%; }
+  .badge.risk-Critical{ background:var(--risk-critical-soft); color:var(--risk-critical); }
+  .badge.risk-High{ background:var(--risk-high-soft); color:var(--risk-high); }
+  .badge.risk-Medium{ background:var(--risk-medium-soft); color:var(--risk-medium); }
+  .badge.risk-Low{ background:var(--risk-low-soft); color:var(--risk-low); }
+  .badge.status-Open{ background:var(--status-open-soft); color:var(--status-open); }
+  .badge.status-InProgress{ background:var(--status-progress-soft); color:var(--status-progress); }
+  .badge.status-Extended{ background:var(--status-extended-soft); color:var(--status-extended); }
+  .badge.status-Closed{ background:var(--status-closed-soft); color:var(--status-closed); }
+  .badge.overdue{ background:var(--overdue-soft); color:var(--overdue); }
+  .badge.sample{ background:var(--gold-soft); color:var(--gold); }
+  .badge.plan-Planned{ background:var(--status-open-soft); color:var(--status-open); }
+  .badge.plan-InProgress{ background:var(--status-progress-soft); color:var(--status-progress); }
+  .badge.plan-Completed{ background:var(--status-closed-soft); color:var(--status-closed); }
+  .badge.plan-Cancelled{ background:var(--overdue-soft); color:var(--overdue); }
+
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .filters select, .filters input[type="text"]{
+    background:var(--surface); border:1px solid var(--line); border-radius:7px; padding:7px 10px; font-size:12.5px; color:var(--ink); min-width:120px;
+  }
+  .filters input[type="text"]{ min-width:200px; flex:1; }
+
+  .table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+  table{ width:100%; border-collapse:collapse; font-size:12.8px; min-width:760px; }
+  thead th{
+    text-align:left; padding:10px 14px; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--ink-faint); border-bottom:1px solid var(--line); background:var(--surface-2); font-weight:600; white-space:nowrap;
+  }
+  tbody td{ padding:11px 14px; border-bottom:1px solid var(--line-soft); vertical-align:middle; }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr.clickable{ cursor:pointer; }
+  tbody tr.clickable:hover{ background:var(--surface-2); }
+  .cell-title{ font-weight:600; color:var(--ink); }
+  .cell-sub{ font-size:11.5px; color:var(--ink-faint); margin-top:2px; }
+  .empty-row td{ text-align:center; color:var(--ink-faint); padding:34px 14px; }
+
+  .chart-svg text{ font-family:'IBM Plex Mono', monospace; font-size:10.5px; fill:var(--ink-soft); }
+  .chart-svg .axis-line{ stroke:var(--line); stroke-width:1; }
+  .chart-svg .grid-line{ stroke:var(--line-soft); stroke-width:1; }
+  .chart-svg .bar-label{ fill:var(--ink); font-weight:600; font-family:'Public Sans',sans-serif; font-size:11.5px; }
+
+  .scrim{ position:fixed; inset:0; background:rgba(15,18,28,.42); z-index:40; animation:fade .15s ease; }
+  @keyframes fade{ from{opacity:0} to{opacity:1} }
+  .slideover{
+    position:fixed; top:0; right:0; height:100vh; width:min(560px,94vw); background:var(--surface); z-index:41;
+    box-shadow:var(--shadow-md); display:flex; flex-direction:column; animation:slidein .18s ease; border-left:1px solid var(--line);
+  }
+  @keyframes slidein{ from{ transform:translateX(24px); opacity:0 } to{ transform:translateX(0); opacity:1 } }
+  .slideover-head{ padding:20px 22px 14px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:flex-start; }
+  .slideover-head .code{ font-size:11px; color:var(--ink-faint); }
+  .slideover-head h2{ font-size:18px; margin:3px 0 0; }
+  .slideover-close{ margin-left:auto; background:none; border:none; cursor:pointer; color:var(--ink-faint); font-size:20px; line-height:1; padding:4px; }
+  .slideover-body{ padding:18px 22px; overflow-y:auto; flex:1; }
+  .field-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; margin-bottom:16px; }
+  .field-grid .full{ grid-column:1/-1; }
+  .field-lbl{ font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); font-weight:600; margin-bottom:3px; }
+  .field-val{ font-size:13.5px; color:var(--ink); }
+  .desc-box{ font-size:13px; color:var(--ink-soft); background:var(--surface-2); border:1px solid var(--line-soft); border-radius:8px; padding:12px 14px; margin-bottom:18px; white-space:pre-wrap; }
+
+  .timeline{ display:flex; flex-direction:column; gap:0; margin-bottom:18px; }
+  .tl-item{ display:grid; grid-template-columns:20px 1fr; gap:12px; padding-bottom:16px; position:relative; }
+  .tl-item:not(:last-child)::before{ content:""; position:absolute; left:9px; top:20px; bottom:0; width:1px; background:var(--line); }
+  .tl-dot{ width:20px; height:20px; border-radius:50%; background:var(--accent-soft); border:1px solid var(--accent-soft-line); display:flex; align-items:center; justify-content:center; flex:none; z-index:1; }
+  .tl-dot.reschedule{ background:var(--status-extended-soft); border-color:var(--status-extended); }
+  .tl-dot.created{ background:var(--gold-soft); border-color:var(--gold); }
+  .tl-date{ font-size:11px; color:var(--ink-faint); }
+  .tl-note{ font-size:13px; color:var(--ink); margin-top:2px; }
+  .tl-by{ font-size:11px; color:var(--ink-faint); margin-top:2px; }
+
+  form .form-row{ margin-bottom:12px; }
+  form label{ display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); font-weight:600; margin-bottom:5px; }
+  form input, form select, form textarea{
+    width:100%; background:var(--surface); border:1px solid var(--line); border-radius:7px; padding:8px 11px; font-size:13px; color:var(--ink); font-family:inherit;
+  }
+  form textarea{ resize:vertical; min-height:64px; }
+  form .row-2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  form .hint{ font-size:11px; color:var(--ink-faint); margin-top:4px; }
+  form .err{ font-size:11.5px; color:var(--overdue); margin-top:4px; }
+
+  .modal-scrim{ position:fixed; inset:0; background:rgba(15,18,28,.42); z-index:50; display:flex; align-items:flex-start; justify-content:center; padding:6vh 16px; overflow-y:auto; }
+  .modal{ background:var(--surface); border-radius:14px; width:min(560px,100%); box-shadow:var(--shadow-md); border:1px solid var(--line); animation:slidein .16s ease; }
+  .modal-head{ display:flex; align-items:center; gap:10px; padding:18px 22px; border-bottom:1px solid var(--line); }
+  .modal-head h3{ font-size:16px; margin:0; }
+  .modal-body{ padding:20px 22px; }
+  .modal-foot{ padding:14px 22px 20px; display:flex; gap:10px; justify-content:flex-end; }
+
+  .chip-list{ display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
+  .chip{ display:flex; align-items:center; gap:6px; background:var(--surface-2); border:1px solid var(--line); border-radius:20px; padding:4px 6px 4px 11px; font-size:12px; }
+  .chip button{ background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:14px; line-height:1; padding:2px; }
+  .chip button:hover{ color:var(--overdue); }
+  .chip.admin{ border-color:var(--gold); }
+
+  .tabbar{ display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  .tabbar button{ background:none; border:none; padding:10px 4px; margin-right:18px; font-size:13.5px; font-weight:600; color:var(--ink-faint); cursor:pointer; border-bottom:2px solid transparent; }
+  .tabbar button.active{ color:var(--accent-strong); border-color:var(--accent); }
+
+  .locked-state{ text-align:center; padding:80px 20px; color:var(--ink-faint); }
+  .locked-state svg{ margin-bottom:14px; opacity:.5; }
+  .locked-state h2{ color:var(--ink); font-size:18px; margin-bottom:6px; }
+  .locked-state p{ font-size:13px; max-width:360px; margin:0 auto 18px; }
+
+  /* ---------- full-page gate screens (setup / sign-in / loading) ---------- */
+  .gate{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .gate-card{ max-width:420px; width:100%; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:36px 32px; box-shadow:var(--shadow-md); text-align:center; }
+  .gate-eyebrow{ font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .gate-title{ font-family:'Fraunces',serif; font-size:22px; font-weight:600; margin:6px 0 10px; }
+  .gate-body{ font-size:13px; color:var(--ink-soft); margin-bottom:22px; line-height:1.6; }
+  .gate-code{ text-align:left; background:var(--surface-2); border:1px solid var(--line-soft); border-radius:8px; padding:12px 14px; font-size:11.5px; font-family:'IBM Plex Mono',monospace; color:var(--ink-soft); margin-bottom:18px; white-space:pre-wrap; word-break:break-all; }
+  .spinner{ width:28px; height:28px; border-radius:50%; border:3px solid var(--accent-soft-line); border-top-color:var(--accent); animation:spin .8s linear infinite; margin:0 auto 18px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:var(--line); border-radius:6px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+
+  @media (max-width: 880px){
+    .sidebar{ display:none; }
+    .stat-row{ grid-template-columns:repeat(2,1fr); }
+    .grid-2{ grid-template-columns:1fr; }
+    .field-grid{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- MSAL.js — Microsoft Authentication Library, handles sign-in and access tokens -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/msal/3.7.1/msal-browser.min.js"></script>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ============================================================
+     CONFIG — แก้ค่าทั้งหมดในบล็อกนี้ก่อนใช้งานจริง
+     ============================================================ */
+  var CONFIG = {
+    // Azure AD App Registration → Overview
+    clientId: 'YOUR_AZURE_AD_APP_CLIENT_ID',
+    tenantId: 'YOUR_AZURE_AD_TENANT_ID',
+    // ต้องตรงกับ Redirect URI ที่ตั้งไว้ใน App Registration (Platform: Single-page application)
+    redirectUri: window.location.origin,
+
+    // SharePoint → ไซต์ที่เก็บ List ทั้งหมด (หา Site ID ผ่าน Graph Explorer:
+    // GET https://graph.microsoft.com/v1.0/sites/{hostname}:/sites/{site-path})
+    siteId: 'YOUR_SHAREPOINT_SITE_ID',
+
+    // List ID ของแต่ละ SharePoint List (หาได้จาก URL ตอนเปิด List Settings
+    // หรือ GET /sites/{siteId}/lists ผ่าน Graph Explorer)
+    lists: {
+      departments:    'YOUR_DEPARTMENTS_LIST_ID',
+      categories:     'YOUR_CATEGORIES_LIST_ID',
+      auditPlans:     'YOUR_AUDITPLANS_LIST_ID',
+      findings:       'YOUR_FINDINGS_LIST_ID',
+      progressLog:    'YOUR_PROGRESSLOG_LIST_ID',
+      dueDateHistory: 'YOUR_DUEDATEHISTORY_LIST_ID'
+    },
+
+    // ชื่อ Azure AD Security Group ที่กำหนดให้เป็น Admin IA (Display Name ตรงตัว)
+    adminGroupName: 'IA-Admin-Group',
+
+    // ความถี่การรีเฟรชข้อมูล (Graph API ไม่มี real-time push ให้หน้าเว็บ static)
+    pollIntervalMs: 60000
+  };
+
+  var NEEDS_CONFIG = CONFIG.clientId.indexOf('YOUR_') === 0
+    || CONFIG.tenantId.indexOf('YOUR_') === 0
+    || CONFIG.siteId.indexOf('YOUR_') === 0
+    || Object.keys(CONFIG.lists).some(function(k){ return CONFIG.lists[k].indexOf('YOUR_') === 0; });
+
+  /* ============================================================
+     CONSTANTS (เหมือนต้นแบบเดิมทุกประการ)
+     ============================================================ */
+  var THAI_MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  var RISK_LEVELS = ['Critical','High','Medium','Low'];
+  var RISK_LABEL_SHORT = {Critical:'วิกฤต', High:'สูง', Medium:'ปานกลาง', Low:'ต่ำ'};
+  var STATUS_LIST = ['Open','In Progress','Extended','Closed'];
+  var STATUS_LABEL = {'Open':'เปิดใหม่','In Progress':'กำลังดำเนินการ','Extended':'เลื่อนกำหนด','Closed':'ปิดแล้ว'};
+  var PLAN_STATUS_LIST = ['Planned','In Progress','Completed','Cancelled'];
+  var PLAN_STATUS_LABEL = {'Planned':'ตามแผน','In Progress':'กำลังตรวจ','Completed':'เสร็จสิ้น','Cancelled':'ยกเลิก'};
+
+  // ใช้เฉพาะตอนกด "นำเข้าข้อมูลตัวอย่าง" ในหน้า Admin เพื่อทดสอบ pipeline
+  // อ่าน/เขียนกับ SharePoint List จริงแบบ end-to-end — ไม่ได้ถูกใช้แสดงผลตรงๆ
+  var SEED_DEPARTMENTS = ['ฝ่ายการเงินและบัญชี','ฝ่ายจัดซื้อ','ฝ่ายเทคโนโลยีสารสนเทศ','ฝ่ายก่อสร้างและพัฒนาโครงการ','ฝ่ายบริหารทรัพย์สิน','ฝ่ายขายและการตลาด','ฝ่ายทรัพยากรบุคคล','ฝ่ายกฎหมาย'];
+  var SEED_CATEGORIES = ['การเงิน','การปฏิบัติงาน','การปฏิบัติตามกฎระเบียบ','เทคโนโลยีสารสนเทศ','การจัดซื้อจัดจ้าง','การทุจริต'];
+
+  var ICONS = {
+    dashboard:'<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="6" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="8.5" y="1.5" width="6" height="4" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="8.5" y="7.5" width="6" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="1.5" y="10.5" width="6" height="4" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>',
+    register:'<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="1.5" width="12" height="13" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 5h6M5 8h6M5 11h3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+    admin:'<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l5.5 2v3.8c0 3.7-2.3 6.7-5.5 7.7-3.2-1-5.5-4-5.5-7.7V3.5L8 1.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.7 8.2l1.6 1.6 3-3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    lock:'<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3.5" y="7" width="9" height="7" rx="1.3" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 7V4.8a2.5 2.5 0 015 0V7" stroke="currentColor" stroke-width="1.3"/></svg>',
+    ms:'<svg width="16" height="16" viewBox="0 0 16 16"><rect width="7" height="7" fill="#F25022"/><rect x="9" width="7" height="7" fill="#7FBA00"/><rect y="9" width="7" height="7" fill="#00A4EF"/><rect x="9" y="9" width="7" height="7" fill="#FFB900"/></svg>'
+  };
+
+  /* ============================================================
+     HELPERS (เหมือนต้นแบบเดิม)
+     ============================================================ */
+  function esc(s){
+    s = (s===undefined||s===null) ? '' : String(s);
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function pad2(n){ return n<10 ? '0'+n : ''+n; }
+  function todayISO(){ var d=new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+  function nowISO(){ return new Date().toISOString(); }
+  function beYear(ad){ return Number(ad)+543; }
+  function fmtDateThai(iso, opts){
+    if(!iso) return '—';
+    var parts = String(iso).split('-');
+    if(parts.length<3) return iso;
+    var y=Number(parts[0]), m=Number(parts[1]), d=Number(parts[2]);
+    var short = opts && opts.short;
+    return d + ' ' + THAI_MONTHS[m-1] + (short ? '' : ' ' + beYear(y));
+  }
+  function fmtDateTimeThai(iso){
+    if(!iso) return '—';
+    var d = new Date(iso);
+    if(isNaN(d.getTime())) return iso;
+    var y=d.getFullYear(), m=d.getMonth()+1, day=d.getDate();
+    return day + ' ' + THAI_MONTHS[m-1] + ' ' + beYear(y) + ' · ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ' น.';
+  }
+  function daysDiffFromToday(iso){
+    if(!iso) return 0;
+    var a = new Date(todayISO()+'T00:00:00');
+    var b = new Date(iso+'T00:00:00');
+    return Math.round((a-b)/86400000);
+  }
+  function isOverdue(f){ return f.status !== 'Closed' && f.dueDate && daysDiffFromToday(f.dueDate) > 0; }
+  function byId(arr, id){ for(var i=0;i<arr.length;i++){ if(arr[i].id===id) return arr[i]; } return null; }
+  function groupBy(arr, key){
+    var out = {};
+    arr.forEach(function(x){ var k=String(x[key]||''); (out[k]=out[k]||[]).push(x); });
+    return out;
+  }
+
+  /* ============================================================
+     STATE
+     ============================================================ */
+  var appState = NEEDS_CONFIG ? 'needs-config' : 'signed-out'; // needs-config | signed-out | loading | ready | error
+  var appError = '';
+
+  var state = {
+    view:'dashboard',
+    year:null,
+    plans:[],
+    findings:[],
+    config:{ departments:[], categories:[] },
+    deptItems:[], catItems:[], // {name, id} — id = SharePoint item id, needed to delete
+    isAdmin:false,
+    userEmail:'',
+    userName:'',
+    openFindingId:null,
+    filters:{ plan:'', dept:'', risk:'', status:'', q:'' },
+    groupBy:'dept',
+    adminTab:'plans',
+    ui:{ addFindingOpen:false, planModalOpen:false, editPlanId:null }
+  };
+
+  try{ state.userName = localStorage.getItem('ia_user_name') || ''; }catch(e){}
+
+  /* ============================================================
+     AUTH (MSAL.js — replaces the email soft-gate from the prototype)
+     ============================================================ */
+  var msalInstance = null;
+
+  function initMsal(){
+    msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId: CONFIG.clientId,
+        authority: 'https://login.microsoftonline.com/' + CONFIG.tenantId,
+        redirectUri: CONFIG.redirectUri
+      },
+      cache: { cacheLocation: 'localStorage' }
+    });
+  }
+
+  async function signIn(){
+    try{
+      var result = await msalInstance.loginPopup({ scopes: ['Sites.Selected', 'User.Read'] });
+      msalInstance.setActiveAccount(result.account);
+      await afterSignIn();
+    }catch(e){
+      appState = 'error'; appError = 'ลงชื่อเข้าใช้ไม่สำเร็จ: ' + e.message; render();
+    }
+  }
+
+  function signOutClick(){
+    if(!confirm('ออกจากระบบ?')) return;
+    msalInstance.logoutRedirect();
+  }
+
+  async function getAccessToken(){
+    var account = msalInstance.getActiveAccount();
+    if(!account) throw new Error('ยังไม่ได้ลงชื่อเข้าใช้');
+    var request = { scopes: ['Sites.Selected'], account: account };
+    try{ return (await msalInstance.acquireTokenSilent(request)).accessToken; }
+    catch(e){ return (await msalInstance.acquireTokenPopup(request)).accessToken; }
+  }
+
+  async function checkIsAdmin(){
+    try{
+      var token = await getAccessToken();
+      var res = await fetch('https://graph.microsoft.com/v1.0/me/memberOf', { headers: { Authorization: 'Bearer ' + token } });
+      if(!res.ok) return false;
+      var data = await res.json();
+      return (data.value||[]).some(function(g){ return g.displayName === CONFIG.adminGroupName; });
+    }catch(e){ return false; }
+  }
+
+  async function afterSignIn(){
+    appState = 'loading'; render();
+    var account = msalInstance.getActiveAccount();
+    state.userEmail = account.username || '';
+    if(!state.userName) state.userName = account.name || state.userEmail;
+    try{
+      state.isAdmin = await checkIsAdmin();
+      await loadAll();
+      appState = 'ready';
+      setInterval(function(){ loadAll().catch(function(){}); }, CONFIG.pollIntervalMs);
+    }catch(e){
+      appState = 'error'; appError = e.message;
+    }
+    render();
+  }
+
+  /* ============================================================
+     GRAPH API DATA LAYER — แทนที่ "DB WIRING" ของต้นแบบเดิม
+     ============================================================ */
+  function graphHeaders(token, extra){
+    var h = { Authorization: 'Bearer ' + token };
+    if(extra) h['Content-Type'] = 'application/json';
+    return h;
+  }
+  async function graphError(res){
+    var body = null; try{ body = await res.json(); }catch(e){}
+    return new Error((body && body.error && body.error.message) || ('Graph API error ' + res.status));
+  }
+  async function graphGet(path){
+    var token = await getAccessToken();
+    var url = path.indexOf('http')===0 ? path : 'https://graph.microsoft.com/v1.0' + path;
+    var res = await fetch(url, { headers: graphHeaders(token) });
+    if(!res.ok) throw await graphError(res);
+    return res.json();
+  }
+  async function graphPost(path, body){
+    var token = await getAccessToken();
+    var res = await fetch('https://graph.microsoft.com/v1.0' + path, { method:'POST', headers: graphHeaders(token, true), body: JSON.stringify(body) });
+    if(!res.ok) throw await graphError(res);
+    return res.json();
+  }
+  async function graphPatch(path, body){
+    var token = await getAccessToken();
+    var res = await fetch('https://graph.microsoft.com/v1.0' + path, { method:'PATCH', headers: graphHeaders(token, true), body: JSON.stringify(body) });
+    if(!res.ok) throw await graphError(res);
+    return res.status===204 ? null : res.json();
+  }
+  async function graphDelete(path){
+    var token = await getAccessToken();
+    var res = await fetch('https://graph.microsoft.com/v1.0' + path, { method:'DELETE', headers: graphHeaders(token) });
+    if(!res.ok && res.status!==404) throw await graphError(res);
+  }
+
+  function listItemsUrl(listId){ return '/sites/' + CONFIG.siteId + '/lists/' + listId + '/items?$expand=fields&$top=200'; }
+
+  async function fetchListItems(listId){
+    var out = []; var url = listItemsUrl(listId);
+    while(url){
+      var data = await graphGet(url);
+      (data.value||[]).forEach(function(item){
+        var row = Object.assign({}, item.fields);
+        row.spItemId = item.id;
+        out.push(row);
+      });
+      url = data['@odata.nextLink'] || null;
+    }
+    return out;
+  }
+
+  /* ---- field mapping: SharePoint List columns (internal names) <-> app state ---- */
+  function mapPlanFromGraph(item){
+    return {
+      id: String(item.spItemId), year: Number(item.PlanYear), code: item.Title || '',
+      title: item.PlanTitle || '', department: item.Department || '', scope: item.Scope || '',
+      periodStart: (item.PeriodStart||'').slice(0,10), periodEnd: (item.PeriodEnd||'').slice(0,10),
+      leadAuditor: item.LeadAuditor || '', status: item.PlanStatus || 'Planned'
+    };
+  }
+  function mapFindingFromGraph(item){
+    return {
+      id: String(item.spItemId), planId: String(item.PlanId||''), findingNo: item.Title || '',
+      title: item.FindingTitle || '', description: item.Description || '', department: item.Department || '',
+      riskLevel: item.RiskLevel || 'Medium', category: item.Category || '', owner: item.Owner || '',
+      dueDate: (item.DueDate||'').slice(0,10), originalDueDate: (item.OriginalDueDate||'').slice(0,10),
+      status: item.FindingStatus || 'Open', createdAt: item.CreatedAtUtc || '', createdBy: item.CreatedBy || '',
+      closedAt: item.ClosedAtUtc || null, progressLog: [], dueDateHistory: []
+    };
+  }
+  function mapLogFromGraph(item){
+    return { date:item.LogDate, note:item.Note||'', updatedBy:item.UpdatedBy||'', statusChange:item.StatusChange||null, findingId:String(item.FindingId||'') };
+  }
+  function mapHistFromGraph(item){
+    return { oldDueDate:(item.OldDueDate||'').slice(0,10), newDueDate:(item.NewDueDate||'').slice(0,10), reason:item.Reason||'', changedBy:item.ChangedBy||'', changedAt:item.ChangedAtUtc||'', findingId:String(item.FindingId||'') };
+  }
+
+  async function loadAll(){
+    var results = await Promise.all([
+      fetchListItems(CONFIG.lists.departments),
+      fetchListItems(CONFIG.lists.categories),
+      fetchListItems(CONFIG.lists.auditPlans),
+      fetchListItems(CONFIG.lists.findings),
+      fetchListItems(CONFIG.lists.progressLog),
+      fetchListItems(CONFIG.lists.dueDateHistory)
+    ]);
+    var deptItems = results[0], catItems = results[1], plansRaw = results[2], findingsRaw = results[3], logsRaw = results[4], histRaw = results[5];
+
+    state.deptItems = deptItems.map(function(d){ return { name:d.Title, id:d.spItemId }; }).filter(function(d){ return d.name; });
+    state.catItems  = catItems.map(function(c){ return { name:c.Title, id:c.spItemId }; }).filter(function(c){ return c.name; });
+    state.config.departments = state.deptItems.map(function(d){ return d.name; });
+    state.config.categories  = state.catItems.map(function(c){ return c.name; });
+
+    state.plans = plansRaw.map(mapPlanFromGraph);
+
+    var logsByFinding = groupBy(logsRaw.map(mapLogFromGraph), 'findingId');
+    var histByFinding = groupBy(histRaw.map(mapHistFromGraph), 'findingId');
+    state.findings = findingsRaw.map(mapFindingFromGraph).map(function(f){
+      f.progressLog = (logsByFinding[f.id]||[]).slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+      f.dueDateHistory = (histByFinding[f.id]||[]).slice().sort(function(a,b){ return (a.changedAt||'').localeCompare(b.changedAt||''); });
+      return f;
+    });
+
+    ensureYearSelected();
+    render();
+  }
+
+  function ensureYearSelected(){
+    if(state.plans.length){
+      var years = state.plans.map(function(p){ return p.year; });
+      var latest = Math.max.apply(null, years);
+      if(state.year === null || years.indexOf(state.year) === -1) state.year = latest;
+    }
+  }
+
+  /* ============================================================
+     ACTIONS — เขียนข้อมูลผ่าน Graph API แทน db.collection().add()/.update()
+     ============================================================ */
+  function currentActor(){ return state.userName || state.userEmail || 'ผู้ใช้งาน'; }
+
+  async function addFinding(data){
+    try{
+      var created = await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.findings+'/items', { fields:{
+        Title:data.findingNo, PlanId:data.planId, FindingTitle:data.title, Description:data.description||'',
+        Department:data.department, RiskLevel:data.riskLevel, Category:data.category, Owner:data.owner||'',
+        DueDate:data.dueDate, OriginalDueDate:data.dueDate, FindingStatus:'Open',
+        CreatedAtUtc:nowISO(), CreatedBy:currentActor(), ClosedAtUtc:null
+      }});
+      await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.progressLog+'/items', { fields:{
+        FindingId:String(created.id), LogDate:nowISO(), Note:'บันทึก Finding เข้าสู่ระบบ', UpdatedBy:currentActor(), StatusChange:'Open'
+      }});
+      await loadAll();
+    }catch(e){ alert('บันทึกไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function addProgress(findingId, data){
+    var f = byId(state.findings, findingId);
+    if(!f) return;
+    try{
+      await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.progressLog+'/items', { fields:{
+        FindingId:findingId, LogDate:nowISO(), Note:data.note, UpdatedBy:currentActor(), StatusChange:data.status||null
+      }});
+      var updates = {};
+      if(data.status){ updates.FindingStatus = data.status; if(data.status==='Closed') updates.ClosedAtUtc = nowISO(); }
+      if(data.newDueDate && data.newDueDate !== f.dueDate){
+        await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.dueDateHistory+'/items', { fields:{
+          FindingId:findingId, OldDueDate:f.dueDate, NewDueDate:data.newDueDate, Reason:data.reason||'(ไม่ระบุเหตุผล)', ChangedBy:currentActor(), ChangedAtUtc:nowISO()
+        }});
+        updates.DueDate = data.newDueDate;
+        if(!data.status) updates.FindingStatus = 'Extended';
+      }
+      if(Object.keys(updates).length){
+        await graphPatch('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.findings+'/items/'+findingId+'/fields', updates);
+      }
+      await loadAll();
+    }catch(e){ alert('บันทึกความคืบหน้าไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function savePlan(data, editId){
+    var fields = {
+      Title:data.code, PlanYear:Number(data.year), PlanTitle:data.title, Department:data.department, Scope:data.scope||'',
+      PeriodStart:data.periodStart||null, PeriodEnd:data.periodEnd||null, LeadAuditor:data.leadAuditor||'', PlanStatus:data.status
+    };
+    try{
+      if(editId){ await graphPatch('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.auditPlans+'/items/'+editId+'/fields', fields); }
+      else{ await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.auditPlans+'/items', { fields:fields }); }
+      await loadAll();
+    }catch(e){ alert('บันทึกแผนการตรวจไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function deletePlan(id){
+    if(!confirm('ยืนยันการลบแผนการตรวจนี้? Finding ที่ผูกกับแผนนี้จะยังคงอยู่ในทะเบียนแต่จะไม่มีแผนงานอ้างอิง')) return;
+    try{ await graphDelete('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.auditPlans+'/items/'+id); await loadAll(); }
+    catch(e){ alert('ลบไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function addConfigItem(key, val){
+    var listId = key==='departments' ? CONFIG.lists.departments : CONFIG.lists.categories;
+    try{ await graphPost('/sites/'+CONFIG.siteId+'/lists/'+listId+'/items', { fields:{ Title: val } }); await loadAll(); }
+    catch(e){ alert('เพิ่มไม่สำเร็จ: ' + e.message); }
+  }
+  async function removeConfigItem(key, val){
+    var items = key==='departments' ? state.deptItems : state.catItems;
+    var match = items.filter(function(x){ return x.name===val; })[0];
+    if(!match) return;
+    var listId = key==='departments' ? CONFIG.lists.departments : CONFIG.lists.categories;
+    try{ await graphDelete('/sites/'+CONFIG.siteId+'/lists/'+listId+'/items/'+match.id); await loadAll(); }
+    catch(e){ alert('ลบไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function importSampleData(){
+    if(!confirm('นำเข้าข้อมูลตัวอย่าง 4 แผนการตรวจ + 5 Finding เข้า SharePoint List จริง เพื่อทดสอบระบบ?')) return;
+    try{
+      for(var i=0;i<SEED_DEPARTMENTS.length;i++){ if(state.config.departments.indexOf(SEED_DEPARTMENTS[i])===-1) await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.departments+'/items', {fields:{Title:SEED_DEPARTMENTS[i]}}); }
+      for(var j=0;j<SEED_CATEGORIES.length;j++){ if(state.config.categories.indexOf(SEED_CATEGORIES[j])===-1) await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.categories+'/items', {fields:{Title:SEED_CATEGORIES[j]}}); }
+      var p1 = await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.auditPlans+'/items', {fields:{
+        Title:'AP-2026-001', PlanYear:2026, PlanTitle:'ตรวจสอบกระบวนการจัดซื้อจัดจ้างงานก่อสร้างโครงการ', Department:'ฝ่ายจัดซื้อ',
+        Scope:'สอบทานกระบวนการคัดเลือกผู้รับเหมา การอนุมัติวงเงิน และการบริหารสัญญา', PeriodStart:'2026-01-01', PeriodEnd:'2026-06-30',
+        LeadAuditor:'ทีมตรวจสอบภายใน A', PlanStatus:'In Progress'
+      }});
+      var f1 = await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.findings+'/items', {fields:{
+        Title:'F-2026-002', PlanId:String(p1.id), FindingTitle:'เอกสารหลักฐานการอนุมัติจัดซื้อไม่ครบถ้วนตามวงเงินที่กำหนด',
+        Description:'สุ่มตรวจใบสั่งซื้อ 20 รายการ พบ 6 รายการที่วงเงินเกินอำนาจอนุมัติของหัวหน้างานแต่ไม่มีลายเซ็นผู้บริหารระดับสูงตามผังอำนาจอนุมัติ',
+        Department:'ฝ่ายจัดซื้อ', RiskLevel:'Critical', Category:'การจัดซื้อจัดจ้าง', Owner:'คุณวิภา จัดซื้อดี',
+        DueDate:'2026-08-31', OriginalDueDate:'2026-08-31', FindingStatus:'Open',
+        CreatedAtUtc:nowISO(), CreatedBy:'ทีมตรวจสอบภายใน A', ClosedAtUtc:null
+      }});
+      await graphPost('/sites/'+CONFIG.siteId+'/lists/'+CONFIG.lists.progressLog+'/items', {fields:{
+        FindingId:String(f1.id), LogDate:nowISO(), Note:'แจ้งข้อตรวจพบและขอให้ทบทวนผังอำนาจอนุมัติ', UpdatedBy:'ทีมตรวจสอบภายใน A', StatusChange:'Open'
+      }});
+      await loadAll();
+      alert('นำเข้าข้อมูลตัวอย่างสำเร็จ — ตรวจสอบผลใน SharePoint List ได้เลย');
+    }catch(e){ alert('นำเข้าไม่สำเร็จ: ' + e.message); }
+  }
+
+  /* ============================================================
+     DERIVED DATA (เหมือนต้นแบบเดิม)
+     ============================================================ */
+  function findingsForYear(){
+    if(state.year===null) return state.findings;
+    var planIds = {};
+    state.plans.forEach(function(p){ if(p.year===state.year) planIds[p.id]=true; });
+    return state.findings.filter(function(f){ return planIds[f.planId]; });
+  }
+  function plansForYear(){
+    if(state.year===null) return state.plans;
+    return state.plans.filter(function(p){ return p.year===state.year; });
+  }
+  function planCode(id){ var p=byId(state.plans,id); return p ? p.code : '—'; }
+
+  function filteredFindings(){
+    var list = findingsForYear();
+    var f = state.filters;
+    return list.filter(function(x){
+      if(f.plan && x.planId!==f.plan) return false;
+      if(f.dept && x.department!==f.dept) return false;
+      if(f.risk && x.riskLevel!==f.risk) return false;
+      if(f.status){
+        if(f.status==='Overdue'){ if(!isOverdue(x)) return false; }
+        else if(x.status!==f.status) return false;
+      }
+      if(f.q){
+        var q = f.q.toLowerCase();
+        var hay = (x.title+' '+x.findingNo+' '+x.department+' '+(x.owner||'')).toLowerCase();
+        if(hay.indexOf(q)===-1) return false;
+      }
+      return true;
+    }).sort(function(a,b){ return (a.dueDate||'').localeCompare(b.dueDate||''); });
+  }
+
+  /* ============================================================
+     RENDER — small components (เหมือนต้นแบบเดิมทุกประการ)
+     ============================================================ */
+  function riskBadge(risk){
+    return '<span class="badge risk-'+esc(risk)+'"><span class="dot" style="background:currentColor"></span>'+esc(RISK_LABEL_SHORT[risk]||risk)+'</span>';
+  }
+  function statusBadge(status){
+    var cls = status.replace(/\s+/g,'');
+    return '<span class="badge status-'+esc(cls)+'">'+esc(STATUS_LABEL[status]||status)+'</span>';
+  }
+  function planStatusBadge(status){
+    var cls = status.replace(/\s+/g,'');
+    return '<span class="badge plan-'+esc(cls)+'">'+esc(PLAN_STATUS_LABEL[status]||status)+'</span>';
+  }
+  function overdueBadge(f){
+    if(!isOverdue(f)) return '';
+    return '<span class="badge overdue">เกินกำหนด '+daysDiffFromToday(f.dueDate)+' วัน</span>';
+  }
+  function selectOptions(list, current, labelMap){
+    return list.map(function(v){
+      var lbl = labelMap ? (labelMap[v]||v) : v;
+      return '<option value="'+esc(v)+'"'+(v===current?' selected':'')+'>'+esc(lbl)+'</option>';
+    }).join('');
+  }
+
+  var RISK_COLOR_VAR = {Critical:'var(--risk-critical)', High:'var(--risk-high)', Medium:'var(--risk-medium)', Low:'var(--risk-low)'};
+  var STATUS_COLOR_VAR = {'Open':'var(--status-open)','In Progress':'var(--status-progress)','Extended':'var(--status-extended)','Closed':'var(--status-closed)'};
+
+  function stackedBarChart(list, groupByKey){
+    var groups = {}; var order = [];
+    list.forEach(function(f){
+      var key = groupByKey==='plan' ? planCode(f.planId) : f.department;
+      if(!groups[key]){ groups[key]={Critical:0,High:0,Medium:0,Low:0,total:0}; order.push(key); }
+      groups[key][f.riskLevel] = (groups[key][f.riskLevel]||0)+1;
+      groups[key].total++;
+    });
+    order.sort(function(a,b){ return groups[b].total-groups[a].total; });
+    order = order.slice(0,8);
+    if(!order.length){ return '<div style="padding:40px 0;text-align:center;color:var(--ink-faint);font-size:12.5px;">ไม่มีข้อมูลในตัวกรองปัจจุบัน</div>'; }
+    var max = Math.max.apply(null, order.map(function(k){ return groups[k].total; }));
+    max = Math.max(max,1);
+    var W = 580, rowH = 34, gap = 10, labelW = 176, chartW = W-labelW-46;
+    var H = order.length*(rowH+gap);
+    var svg = '<svg class="chart-svg" viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="xMinYMin meet">';
+    var ticks = Math.min(4, max);
+    var step = max/ticks;
+    for(var t=0;t<=ticks;t++){
+      var x = labelW + (chartW*t/ticks);
+      var val = Math.round(step*t);
+      svg += '<line class="grid-line" x1="'+x+'" y1="0" x2="'+x+'" y2="'+H+'"/>';
+      svg += '<text x="'+x+'" y="'+(H-2)+'" text-anchor="middle">'+val+'</text>';
+    }
+    order.forEach(function(key, i){
+      var y = i*(rowH+gap);
+      var g = groups[key];
+      svg += '<text x="'+(labelW-10)+'" y="'+(y+rowH/2+4)+'" text-anchor="end" class="bar-label">'+esc(key.length>22?key.slice(0,21)+'…':key)+'</text>';
+      var cx = labelW;
+      RISK_LEVELS.forEach(function(r){
+        var v = g[r]||0;
+        if(!v) return;
+        var w = (v/max)*chartW;
+        svg += '<rect x="'+cx+'" y="'+y+'" width="'+w+'" height="'+(rowH-8)+'" rx="3" fill="'+RISK_COLOR_VAR[r]+'"><title>'+esc(key)+' · '+esc(RISK_LABEL_SHORT[r])+': '+v+'</title></rect>';
+        cx += w;
+      });
+      svg += '<text x="'+(cx+8)+'" y="'+(y+rowH/2+4)+'" class="bar-label">'+g.total+'</text>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  function donutChart(list){
+    var counts = {'Open':0,'In Progress':0,'Extended':0,'Closed':0};
+    list.forEach(function(f){ counts[f.status] = (counts[f.status]||0)+1; });
+    var total = list.length || 1;
+    var R=58, CX=70, CY=70, STROKE=22;
+    var circ = 2*Math.PI*R;
+    var offset = 0;
+    var svg = '<svg class="chart-svg" viewBox="0 0 140 140" width="140" height="140">';
+    svg += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="none" stroke="var(--line-soft)" stroke-width="'+STROKE+'"/>';
+    STATUS_LIST.forEach(function(s){
+      var v = counts[s];
+      if(!v) return;
+      var frac = v/total;
+      var len = frac*circ;
+      svg += '<circle cx="'+CX+'" cy="'+CY+'" r="'+R+'" fill="none" stroke="'+STATUS_COLOR_VAR[s]+'" stroke-width="'+STROKE+'" stroke-dasharray="'+len+' '+(circ-len)+'" stroke-dashoffset="'+(-offset)+'" transform="rotate(-90 '+CX+' '+CY+')"><title>'+esc(STATUS_LABEL[s])+': '+v+'</title></circle>';
+      offset += len;
+    });
+    svg += '<text x="'+CX+'" y="'+(CY-3)+'" text-anchor="middle" style="font-size:20px;font-weight:700;fill:var(--ink);font-family:\'Fraunces\',serif;">'+list.length+'</text>';
+    svg += '<text x="'+CX+'" y="'+(CY+13)+'" text-anchor="middle" style="font-size:9.5px;fill:var(--ink-faint);">ทั้งหมด</text>';
+    svg += '</svg>';
+    var legend = '<div class="legend">' + STATUS_LIST.map(function(s){
+      return '<span class="legend-item"><span class="legend-dot round" style="background:'+STATUS_COLOR_VAR[s]+'"></span>'+esc(STATUS_LABEL[s])+' ('+(counts[s]||0)+')</span>';
+    }).join('') + '</div>';
+    return '<div style="display:flex;flex-direction:column;align-items:center;">'+svg+legend+'</div>';
+  }
+
+  /* ============================================================
+     RENDER — views (เหมือนต้นแบบเดิม ยกเว้นจุดที่เกี่ยวกับ Admin login)
+     ============================================================ */
+  function viewDashboard(){
+    var list = findingsForYear();
+    var total = list.length;
+    var overdueCount = list.filter(isOverdue).length;
+    var progressCount = list.filter(function(f){ return f.status==='Open'||f.status==='In Progress'||f.status==='Extended'; }).length;
+    var closedCount = list.filter(function(f){ return f.status==='Closed'; }).length;
+    var overdueList = list.filter(isOverdue).sort(function(a,b){ return daysDiffFromToday(b.dueDate)-daysDiffFromToday(a.dueDate); }).slice(0,8);
+
+    var html = '';
+    html += '<div class="stat-row">'+
+      '<div class="stat-tile"><div class="stat-label">Finding ทั้งหมด</div><div class="stat-value">'+total+'</div><div class="stat-note">ปี '+(state.year?beYear(state.year):'ทั้งหมด')+'</div></div>'+
+      '<div class="stat-tile"><div class="stat-label">เกินกำหนดแก้ไข</div><div class="stat-value c-overdue">'+overdueCount+'</div><div class="stat-note">ต้องติดตามเร่งด่วน</div></div>'+
+      '<div class="stat-tile"><div class="stat-label">กำลังดำเนินการ</div><div class="stat-value c-progress">'+progressCount+'</div><div class="stat-note">เปิด / กำลังทำ / เลื่อนกำหนด</div></div>'+
+      '<div class="stat-tile"><div class="stat-label">ปิดแล้ว</div><div class="stat-value c-closed">'+closedCount+'</div><div class="stat-note">แก้ไขเสร็จสมบูรณ์</div></div>'+
+    '</div>';
+
+    html += '<div class="grid-2">';
+    html += '<div class="panel"><div class="panel-head"><div class="panel-title">จำนวน Finding แยกตามระดับความเสี่ยง</div>';
+    html += '<div class="segmented">';
+    html += '<button data-action="group" data-val="dept" class="'+(state.groupBy==='dept'?'active':'')+'">หน่วยงาน</button>';
+    html += '<button data-action="group" data-val="plan" class="'+(state.groupBy==='plan'?'active':'')+'">แผนการตรวจ</button>';
+    html += '</div></div>';
+    html += stackedBarChart(list, state.groupBy);
+    html += '<div class="legend">'+RISK_LEVELS.map(function(r){
+      return '<span class="legend-item"><span class="legend-dot" style="background:'+RISK_COLOR_VAR[r]+'"></span>'+esc(RISK_LABEL_SHORT[r])+'</span>';
+    }).join('')+'</div></div>';
+    html += '<div class="panel"><div class="panel-head"><div class="panel-title">สถานะการแก้ไข</div></div>' + donutChart(list) + '</div>';
+    html += '</div>';
+
+    html += '<div class="panel"><div class="panel-head"><div class="panel-title">Finding ที่เกินกำหนดแก้ไข</div></div>';
+    if(!overdueList.length){
+      html += '<div style="padding:24px 0;text-align:center;color:var(--ink-faint);font-size:12.5px;">ไม่มี Finding ที่เกินกำหนดในปีนี้ — เยี่ยมมาก</div>';
+    } else {
+      html += '<div class="table-wrap"><table><thead><tr><th>รหัส</th><th>เรื่อง</th><th>หน่วยงาน</th><th>ความเสี่ยง</th><th>กำหนดแก้ไข</th><th>เกินกำหนด</th><th>ผู้รับผิดชอบ</th></tr></thead><tbody>';
+      overdueList.forEach(function(f){
+        html += '<tr class="clickable" data-action="open-finding" data-id="'+esc(f.id)+'">'+
+          '<td class="mono">'+esc(f.findingNo)+'</td>'+
+          '<td class="cell-title">'+esc(f.title.length>52?f.title.slice(0,51)+'…':f.title)+'</td>'+
+          '<td>'+esc(f.department)+'</td>'+
+          '<td>'+riskBadge(f.riskLevel)+'</td>'+
+          '<td class="tabular">'+fmtDateThai(f.dueDate,{short:true})+'</td>'+
+          '<td><span class="badge overdue">'+daysDiffFromToday(f.dueDate)+' วัน</span></td>'+
+          '<td>'+esc(f.owner||'—')+'</td>'+
+        '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function viewRegister(){
+    var list = filteredFindings();
+    var f = state.filters;
+    var html = '<div class="panel-head" style="margin-bottom:14px;"><div class="panel-title" style="font-size:16px;">ทะเบียน Finding</div>'+
+      '<button class="btn btn-primary" data-action="new-finding">+ เพิ่ม Finding</button></div>';
+    html += '<div class="filters">';
+    html += '<select data-filter="plan"><option value="">ทุกแผนการตรวจ</option>'+plansForYear().map(function(p){ return '<option value="'+esc(p.id)+'"'+(f.plan===p.id?' selected':'')+'>'+esc(p.code)+'</option>'; }).join('')+'</select>';
+    html += '<select data-filter="dept"><option value="">ทุกหน่วยงาน</option>'+selectOptions(state.config.departments, f.dept)+'</select>';
+    html += '<select data-filter="risk"><option value="">ทุกระดับความเสี่ยง</option>'+selectOptions(RISK_LEVELS, f.risk, RISK_LABEL_SHORT)+'</select>';
+    html += '<select data-filter="status"><option value="">ทุกสถานะ</option>'+selectOptions(STATUS_LIST.concat(['Overdue']), f.status, Object.assign({},STATUS_LABEL,{Overdue:'เกินกำหนด'}))+'</select>';
+    html += '<input type="text" data-filter="q" placeholder="ค้นหาชื่อเรื่อง / หน่วยงาน / ผู้รับผิดชอบ" value="'+esc(f.q)+'">';
+    html += '</div>';
+    html += '<div class="table-wrap"><table><thead><tr><th>รหัส</th><th>เรื่อง</th><th>หน่วยงาน</th><th>ความเสี่ยง</th><th>กำหนดแก้ไข</th><th>สถานะ</th></tr></thead><tbody>';
+    if(!list.length){ html += '<tr class="empty-row"><td colspan="6">ไม่พบ Finding ตามเงื่อนไขที่เลือก</td></tr>'; }
+    else {
+      list.forEach(function(x){
+        html += '<tr class="clickable" data-action="open-finding" data-id="'+esc(x.id)+'">'+
+          '<td class="mono">'+esc(x.findingNo)+'</td>'+
+          '<td><div class="cell-title">'+esc(x.title.length>60?x.title.slice(0,59)+'…':x.title)+'</div><div class="cell-sub">'+esc(planCode(x.planId))+' · '+esc(x.category)+'</div></td>'+
+          '<td>'+esc(x.department)+'</td>'+
+          '<td>'+riskBadge(x.riskLevel)+'</td>'+
+          '<td class="tabular">'+fmtDateThai(x.dueDate,{short:true})+'</td>'+
+          '<td>'+statusBadge(x.status)+' '+overdueBadge(x)+'</td>'+
+        '</tr>';
+      });
+    }
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function timelineForFinding(f){
+    var events = [];
+    (f.progressLog||[]).forEach(function(p){ events.push({date:p.date, type:'log', note:p.note, by:p.updatedBy, status:p.statusChange}); });
+    (f.dueDateHistory||[]).forEach(function(d){ events.push({date:d.changedAt, type:'reschedule', note:'เลื่อนกำหนดจาก '+fmtDateThai(d.oldDueDate,{short:true})+' เป็น '+fmtDateThai(d.newDueDate,{short:true})+' — เหตุผล: '+d.reason, by:d.changedBy}); });
+    events.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+    if(!events.length) return '<div style="color:var(--ink-faint);font-size:12.5px;padding:8px 0 16px;">ยังไม่มีบันทึกความคืบหน้า</div>';
+    return '<div class="timeline">' + events.map(function(e){
+      var dotCls = e.type==='reschedule' ? 'reschedule' : 'created';
+      return '<div class="tl-item"><div class="tl-dot '+dotCls+'"></div><div>'+
+        '<div class="tl-date">'+fmtDateTimeThai(e.date)+(e.status?' · '+STATUS_LABEL[e.status]:'')+'</div>'+
+        '<div class="tl-note">'+esc(e.note)+'</div>'+
+        '<div class="tl-by">โดย '+esc(e.by||'—')+'</div>'+
+      '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  function findingSlideover(f){
+    var html = '<div class="scrim" data-action="close-finding"></div>';
+    html += '<div class="slideover">';
+    html += '<div class="slideover-head"><div><div class="code mono">'+esc(f.findingNo)+' · '+esc(planCode(f.planId))+'</div><h2>'+esc(f.title)+'</h2></div><button class="slideover-close" data-action="close-finding">&times;</button></div>';
+    html += '<div class="slideover-body">';
+    html += '<div class="field-grid" style="margin-top:14px;">';
+    html += '<div><div class="field-lbl">หน่วยงาน</div><div class="field-val">'+esc(f.department)+'</div></div>';
+    html += '<div><div class="field-lbl">หมวดความเสี่ยง</div><div class="field-val">'+esc(f.category)+'</div></div>';
+    html += '<div><div class="field-lbl">ระดับความเสี่ยง</div><div class="field-val">'+riskBadge(f.riskLevel)+'</div></div>';
+    html += '<div><div class="field-lbl">สถานะปัจจุบัน</div><div class="field-val">'+statusBadge(f.status)+' '+overdueBadge(f)+'</div></div>';
+    html += '<div><div class="field-lbl">กำหนดแก้ไขปัจจุบัน</div><div class="field-val tabular">'+fmtDateThai(f.dueDate)+'</div></div>';
+    html += '<div><div class="field-lbl">กำหนดเดิม</div><div class="field-val tabular">'+fmtDateThai(f.originalDueDate)+'</div></div>';
+    html += '<div><div class="field-lbl">ผู้รับผิดชอบแก้ไข</div><div class="field-val">'+esc(f.owner||'—')+'</div></div>';
+    html += '<div><div class="field-lbl">บันทึกเมื่อ</div><div class="field-val">'+fmtDateThai(f.createdAt ? f.createdAt.slice(0,10) : '')+'</div></div>';
+    html += '</div>';
+    html += '<div class="field-lbl">รายละเอียดข้อตรวจพบ</div><div class="desc-box">'+esc(f.description||'—')+'</div>';
+    html += '<div class="field-lbl" style="margin-bottom:6px;">ความคืบหน้าและประวัติการเลื่อนกำหนด</div>';
+    html += timelineForFinding(f);
+    if(f.status !== 'Closed'){
+      html += '<form data-form="progress" data-id="'+esc(f.id)+'">';
+      html += '<div class="field-lbl" style="margin:18px 0 10px;">เพิ่มความคืบหน้า</div>';
+      html += '<div class="form-row"><label>ความคืบหน้า / บันทึก</label><textarea name="note" required placeholder="เช่น อยู่ระหว่างดำเนินการแก้ไข ..."></textarea></div>';
+      html += '<div class="row-2">';
+      html += '<div class="form-row"><label>เปลี่ยนสถานะเป็น (ถ้ามี)</label><select name="status"><option value="">— ไม่เปลี่ยน —</option>'+selectOptions(STATUS_LIST.filter(function(s){return s!==f.status;}), '', STATUS_LABEL)+'</select></div>';
+      html += '<div class="form-row"><label>เลื่อนกำหนดแก้ไขใหม่ (ถ้ามี)</label><input type="date" name="newDueDate" value=""></div>';
+      html += '</div>';
+      html += '<div class="form-row"><label>เหตุผลการเลื่อนกำหนด (จำเป็นหากเลื่อนวันที่)</label><input type="text" name="reason" placeholder="ระบุเหตุผลการเลื่อนกำหนด"></div>';
+      html += '<button type="submit" class="btn btn-primary">บันทึกความคืบหน้า</button>';
+      html += '</form>';
+    } else {
+      html += '<div class="banner" style="margin-top:10px;"><span>Finding นี้ปิดแล้วเมื่อ '+fmtDateThai(f.closedAt?f.closedAt.slice(0,10):'')+' ไม่สามารถเพิ่มความคืบหน้าเพิ่มเติมได้</span></div>';
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function viewAdmin(){
+    if(!state.isAdmin){
+      return '<div class="locked-state">'+ICONS.admin.replace('width="16" height="16"','width="40" height="40"').replace('currentColor','var(--gold)')+
+        '<h2>เมนูสำหรับ Admin IA</h2><p>ส่วนนี้สำหรับผู้ดูแลระบบฝ่ายตรวจสอบภายในเท่านั้น บัญชีของคุณไม่ได้อยู่ใน Azure AD Group “'+esc(CONFIG.adminGroupName)+'” — ติดต่อ IT Admin เพื่อขอเพิ่มสิทธิ์หากจำเป็น</p></div>';
+    }
+    var html = '<div class="tabbar">'+
+      '<button data-action="admin-tab" data-val="plans" class="'+(state.adminTab==='plans'?'active':'')+'">แผนการตรวจประจำปี</button>'+
+      '<button data-action="admin-tab" data-val="master" class="'+(state.adminTab==='master'?'active':'')+'">ข้อมูลหลัก</button>'+
+      '</div>';
+    if(state.adminTab==='plans') html += adminPlans();
+    else html += adminMaster();
+    return html;
+  }
+
+  function adminPlans(){
+    var html = '<div class="panel-head" style="margin-bottom:14px;"><div class="panel-title" style="font-size:16px;">แผนการตรวจประจำปี '+(state.year?beYear(state.year):'')+'</div>'+
+      '<button class="btn btn-primary" data-action="new-plan">+ เพิ่มแผนการตรวจ</button></div>';
+    var plans = plansForYear();
+    html += '<div class="table-wrap"><table><thead><tr><th>รหัสแผน</th><th>เรื่องที่ตรวจ</th><th>หน่วยงาน</th><th>ช่วงเวลา</th><th>ผู้รับผิดชอบตรวจ</th><th>สถานะ</th><th></th></tr></thead><tbody>';
+    if(!plans.length){ html += '<tr class="empty-row"><td colspan="7">ยังไม่มีแผนการตรวจสำหรับปีนี้</td></tr>'; }
+    plans.forEach(function(p){
+      html += '<tr>'+
+        '<td class="mono">'+esc(p.code)+'</td>'+
+        '<td class="cell-title">'+esc(p.title)+'</td>'+
+        '<td>'+esc(p.department)+'</td>'+
+        '<td class="tabular">'+fmtDateThai(p.periodStart,{short:true})+' – '+fmtDateThai(p.periodEnd,{short:true})+'</td>'+
+        '<td>'+esc(p.leadAuditor||'—')+'</td>'+
+        '<td>'+planStatusBadge(p.status)+'</td>'+
+        '<td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm" data-action="edit-plan" data-id="'+esc(p.id)+'">แก้ไข</button><button class="btn btn-ghost btn-sm btn-danger" data-action="delete-plan" data-id="'+esc(p.id)+'">ลบ</button></td>'+
+      '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function adminMaster(){
+    var html = '<div class="grid-2" style="grid-template-columns:1fr 1fr;">';
+    html += '<div class="panel"><div class="panel-title" style="margin-bottom:10px;">หน่วยงาน</div>'+chipEditor('departments', state.config.departments)+'</div>';
+    html += '<div class="panel"><div class="panel-title" style="margin-bottom:10px;">หมวดความเสี่ยง / ประเภท Finding</div>'+chipEditor('categories', state.config.categories)+'</div>';
+    html += '</div>';
+    html += '<div class="panel">';
+    html += '<div class="panel-title" style="margin-bottom:4px;">สิทธิ์ผู้ดูแลระบบ (Admin IA)</div>';
+    html += '<div style="font-size:11.5px;color:var(--ink-faint);">จัดการผ่าน Azure AD Security Group “<b>'+esc(CONFIG.adminGroupName)+'</b>” — เพิ่ม/ลบสมาชิกได้ที่ Azure Portal &rarr; Entra ID &rarr; Groups (ไม่สามารถจัดการจากหน้านี้โดยตรง เพื่อความปลอดภัย)</div>';
+    html += '</div>';
+    html += '<div class="panel">';
+    html += '<div class="panel-title" style="margin-bottom:6px;">ข้อมูลทดสอบ</div>';
+    html += '<div style="font-size:12px;color:var(--ink-faint);margin-bottom:10px;">นำเข้าข้อมูลตัวอย่างเพื่อทดสอบว่าอ่าน/เขียนกับ SharePoint List ครบวงจรทำงานถูกต้อง (ใช้ครั้งเดียวตอนตั้งค่าระบบ)</div>';
+    html += '<button class="btn" data-action="import-sample">นำเข้าข้อมูลตัวอย่าง</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function chipEditor(key, list){
+    var html = '<div class="chip-list">';
+    list.forEach(function(v){
+      html += '<div class="chip">'+esc(v)+'<button data-action="remove-chip" data-key="'+key+'" data-val="'+esc(v)+'">&times;</button></div>';
+    });
+    html += '</div>';
+    html += '<form data-form="add-chip" data-key="'+key+'" style="display:flex;gap:8px;margin-top:10px;">'+
+      '<input type="text" name="val" placeholder="เพิ่มรายการใหม่" style="flex:1;"><button class="btn btn-sm" type="submit">เพิ่ม</button></form>';
+    return html;
+  }
+
+  function findingModal(){
+    var plans = plansForYear();
+    if(!plans.length){
+      return '<div class="modal-scrim" data-action="close-modal-bg"><div class="modal">'+
+        '<div class="modal-head"><h3>เพิ่ม Finding ใหม่</h3></div><div class="modal-body">'+
+        '<p style="font-size:13px;color:var(--ink-soft);">ปี '+beYear(state.year)+' ยังไม่มีแผนการตรวจในระบบ กรุณาให้ Admin IA เพิ่มแผนการตรวจของปีนี้ก่อน</p>'+
+        '<div class="modal-foot" style="padding:16px 0 0;"><button type="button" class="btn" data-action="close-modal-bg">ปิด</button></div>'+
+        '</div></div></div>';
+    }
+    var html = '<div class="modal-scrim" data-action="close-modal-bg"><div class="modal">';
+    html += '<div class="modal-head"><h3>เพิ่ม Finding ใหม่</h3></div><div class="modal-body">';
+    html += '<form data-form="add-finding">';
+    html += '<div class="form-row"><label>รหัส Finding</label><input type="text" name="findingNo" required value="'+esc(suggestFindingNo())+'"></div>';
+    html += '<div class="form-row"><label>แผนการตรวจที่เกี่ยวข้อง</label><select name="planId" required>'+
+      plans.map(function(p){ return '<option value="'+esc(p.id)+'">'+esc(p.code)+' — '+esc(p.title)+'</option>'; }).join('')+'</select></div>';
+    html += '<div class="form-row"><label>หัวข้อ Finding</label><input type="text" name="title" required placeholder="สรุปข้อตรวจพบโดยย่อ"></div>';
+    html += '<div class="form-row"><label>รายละเอียด</label><textarea name="description" placeholder="รายละเอียดข้อตรวจพบ สาเหตุ และผลกระทบ"></textarea></div>';
+    html += '<div class="row-2">';
+    html += '<div class="form-row"><label>หน่วยงานที่ถูกตรวจพบ</label><select name="department" required>'+selectOptions(state.config.departments,'')+'</select></div>';
+    html += '<div class="form-row"><label>หมวด</label><select name="category" required>'+selectOptions(state.config.categories,'')+'</select></div>';
+    html += '</div>';
+    html += '<div class="row-2">';
+    html += '<div class="form-row"><label>ระดับความเสี่ยง</label><select name="riskLevel" required>'+selectOptions(RISK_LEVELS,'',RISK_LABEL_SHORT)+'</select></div>';
+    html += '<div class="form-row"><label>กำหนดแก้ไข</label><input type="date" name="dueDate" required value="'+todayISO()+'"></div>';
+    html += '</div>';
+    html += '<div class="form-row"><label>ผู้รับผิดชอบแก้ไข (ชื่อ/หน่วยงาน)</label><input type="text" name="owner" placeholder="ชื่อผู้รับผิดชอบฝั่งหน่วยงานที่ถูกตรวจพบ"></div>';
+    html += '<div class="modal-foot" style="padding:16px 0 0;"><button type="button" class="btn" data-action="close-modal-bg">ยกเลิก</button><button type="submit" class="btn btn-primary">บันทึก Finding</button></div>';
+    html += '</form></div></div></div>';
+    return html;
+  }
+
+  function suggestFindingNo(){
+    var y = state.year || new Date().getFullYear();
+    var n = state.findings.filter(function(f){ return f.findingNo && f.findingNo.indexOf('F-'+y)===0; }).length + 1;
+    return 'F-'+y+'-'+(n<10?'00'+n:n<100?'0'+n:n);
+  }
+
+  function planModal(){
+    var editing = state.ui.editPlanId ? byId(state.plans, state.ui.editPlanId) : null;
+    var html = '<div class="modal-scrim" data-action="close-modal-bg"><div class="modal">';
+    html += '<div class="modal-head"><h3>'+(editing?'แก้ไขแผนการตรวจ':'เพิ่มแผนการตรวจประจำปี')+'</h3></div><div class="modal-body">';
+    html += '<form data-form="save-plan" data-edit-id="'+(editing?esc(editing.id):'')+'">';
+    html += '<div class="row-2">';
+    html += '<div class="form-row"><label>ปี (ค.ศ.)</label><input type="number" name="year" required value="'+(editing?editing.year:(state.year||new Date().getFullYear()))+'"></div>';
+    html += '<div class="form-row"><label>รหัสแผน</label><input type="text" name="code" required value="'+(editing?esc(editing.code):'')+'" placeholder="เช่น AP-2026-005"></div>';
+    html += '</div>';
+    html += '<div class="form-row"><label>เรื่องที่ตรวจ</label><input type="text" name="title" required value="'+(editing?esc(editing.title):'')+'"></div>';
+    html += '<div class="form-row"><label>ขอบเขตการตรวจ</label><textarea name="scope">'+(editing?esc(editing.scope):'')+'</textarea></div>';
+    html += '<div class="form-row"><label>หน่วยงานที่รับการตรวจ</label><select name="department">'+selectOptions(state.config.departments, editing?editing.department:'')+'</select></div>';
+    html += '<div class="row-2">';
+    html += '<div class="form-row"><label>เริ่มช่วงตรวจ</label><input type="date" name="periodStart" value="'+(editing?editing.periodStart:'')+'"></div>';
+    html += '<div class="form-row"><label>สิ้นสุดช่วงตรวจ</label><input type="date" name="periodEnd" value="'+(editing?editing.periodEnd:'')+'"></div>';
+    html += '</div>';
+    html += '<div class="row-2">';
+    html += '<div class="form-row"><label>ผู้รับผิดชอบตรวจ</label><input type="text" name="leadAuditor" value="'+(editing?esc(editing.leadAuditor):'')+'"></div>';
+    html += '<div class="form-row"><label>สถานะแผนงาน</label><select name="status">'+selectOptions(PLAN_STATUS_LIST, editing?editing.status:'Planned', PLAN_STATUS_LABEL)+'</select></div>';
+    html += '</div>';
+    html += '<div class="modal-foot" style="padding:16px 0 0;"><button type="button" class="btn" data-action="close-modal-bg">ยกเลิก</button><button type="submit" class="btn btn-primary">บันทึกแผนการตรวจ</button></div>';
+    html += '</form></div></div></div>';
+    return html;
+  }
+
+  /* ============================================================
+     GATE SCREENS (setup / sign-in / loading / error)
+     ============================================================ */
+  function gateNeedsConfig(){
+    return '<div class="gate"><div class="gate-card">'+
+      '<div class="gate-eyebrow">Singha Estate · Internal Audit</div>'+
+      '<div class="gate-title">ยังไม่ได้ตั้งค่าระบบ</div>'+
+      '<div class="gate-body">แก้ไขค่าคงที่ในบล็อก <b>CONFIG</b> ที่ต้นไฟล์ (clientId, tenantId, siteId, lists) ให้ครบก่อนใช้งาน — ดูขั้นตอนเต็มในเอกสาร “สเปกสำหรับทีม Infra/Developer” ภาคผนวก 7.4</div>'+
+      '<div class="gate-code">CONFIG.clientId\nCONFIG.tenantId\nCONFIG.siteId\nCONFIG.lists.*</div>'+
+      '</div></div>';
+  }
+  function gateSignedOut(){
+    return '<div class="gate"><div class="gate-card">'+
+      '<div class="gate-eyebrow">Singha Estate · Internal Audit</div>'+
+      '<div class="gate-title">Internal Audit Register</div>'+
+      '<div class="gate-body">ลงชื่อเข้าใช้ด้วยบัญชี Microsoft ของบริษัทเพื่อดูและบันทึกข้อมูล Finding</div>'+
+      '<button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;" data-action="sign-in">'+ICONS.ms+' ลงชื่อเข้าใช้ด้วย Microsoft</button>'+
+      '</div></div>';
+  }
+  function gateLoading(){
+    return '<div class="gate"><div class="gate-card"><div class="spinner"></div><div class="gate-title" style="font-size:16px;">กำลังโหลดข้อมูล…</div></div></div>';
+  }
+  function gateError(){
+    return '<div class="gate"><div class="gate-card">'+
+      '<div class="gate-eyebrow">Singha Estate · Internal Audit</div>'+
+      '<div class="gate-title">เกิดข้อผิดพลาด</div>'+
+      '<div class="gate-body">'+esc(appError)+'</div>'+
+      '<button class="btn btn-primary" style="width:100%;justify-content:center;" data-action="retry">ลองใหม่อีกครั้ง</button>'+
+      '</div></div>';
+  }
+
+  /* ============================================================
+     MASTER RENDER
+     ============================================================ */
+  function navItem(view, icon, label, locked){
+    var active = state.view===view;
+    return '<button class="nav-item'+(active?' active':'')+(locked?' locked':'')+'" data-action="nav" data-val="'+view+'">'+ICONS[icon]+'<span>'+label+'</span>'+(locked?'<span class="nav-lock">'+ICONS.lock+'</span>':'')+'</button>';
+  }
+  function pageTitle(){
+    if(state.view==='dashboard') return 'Dashboard ภาพรวม';
+    if(state.view==='register') return 'ทะเบียน Finding';
+    if(state.view==='admin') return 'จัดการแผนการตรวจประจำปี';
+    return '';
+  }
+
+  function render(){
+    var app = document.getElementById('app');
+
+    if(appState==='needs-config'){ app.innerHTML = gateNeedsConfig(); return; }
+    if(appState==='signed-out'){ app.innerHTML = gateSignedOut(); return; }
+    if(appState==='loading'){ app.innerHTML = gateLoading(); return; }
+    if(appState==='error'){ app.innerHTML = gateError(); return; }
+
+    var years = Array.from(new Set(state.plans.map(function(p){ return p.year; }))).sort();
+
+    var html = '';
+    html += '<div class="sidebar">';
+    html += '<div class="brand"><div class="brand-eyebrow">Singha Estate</div><div class="brand-name">Internal Audit</div><div class="brand-sub">ระบบติดตาม Finding &amp; แผนการตรวจ</div></div>';
+    html += '<div class="nav">';
+    html += navItem('dashboard','dashboard','Dashboard');
+    html += navItem('register','register','ทะเบียน Finding');
+    html += navItem('admin','admin','แผนการตรวจประจำปี', !state.isAdmin);
+    html += '</div>';
+    html += '<div class="sidebar-foot">เชื่อมต่อ SharePoint ผ่าน Microsoft Graph · รีเฟรชทุก '+Math.round(CONFIG.pollIntervalMs/1000)+' วินาที</div>';
+    html += '</div>';
+
+    html += '<div class="main">';
+    html += '<div class="topbar"><h1>'+pageTitle()+'</h1><div class="topbar-spacer"></div>';
+    if(years.length){
+      html += '<select class="year-select" data-action="year">'+years.slice().reverse().map(function(y){ return '<option value="'+y+'"'+(y===state.year?' selected':'')+'>ปี '+beYear(y)+'</option>'; }).join('')+'</select>';
+    }
+    html += '<div class="who-pill" data-action="sign-out" title="คลิกเพื่อออกจากระบบ"><div class="who-avatar'+(state.isAdmin?' admin':'')+'">'+esc((state.userName||'?').slice(0,1).toUpperCase())+'</div>'+esc(state.userName||state.userEmail)+(state.isAdmin?' · Admin':'')+'</div>';
+    html += '</div>';
+
+    html += '<div class="content">';
+    if(state.view==='dashboard') html += viewDashboard();
+    else if(state.view==='register') html += viewRegister();
+    else if(state.view==='admin') html += viewAdmin();
+    html += '</div></div>';
+
+    if(state.openFindingId){
+      var f = byId(state.findings, state.openFindingId);
+      if(f) html += findingSlideover(f);
+    }
+    if(state.ui.addFindingOpen) html += findingModal();
+    if(state.ui.planModalOpen) html += planModal();
+
+    app.innerHTML = html;
+  }
+
+  /* ============================================================
+     EVENTS (delegated) — เหมือนต้นแบบเดิม บวกอีเวนต์ sign-in/out
+     ============================================================ */
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('[data-action]');
+    if(!t) return;
+    var action = t.getAttribute('data-action');
+    if(action==='close-modal-bg' && e.target !== t) return;
+    if(action==='close-finding' && e.target !== t) return;
+
+    if(action==='sign-in'){ signIn(); }
+    else if(action==='sign-out'){ signOutClick(); }
+    else if(action==='retry'){ location.reload(); }
+    else if(action==='nav'){ state.view = t.getAttribute('data-val'); render(); }
+    else if(action==='close-modal-bg'){ state.ui.addFindingOpen=false; state.ui.planModalOpen=false; state.ui.editPlanId=null; render(); }
+    else if(action==='group'){ state.groupBy = t.getAttribute('data-val'); render(); }
+    else if(action==='open-finding'){ state.openFindingId = t.getAttribute('data-id'); render(); }
+    else if(action==='close-finding'){ state.openFindingId = null; render(); }
+    else if(action==='new-finding'){ state.ui.addFindingOpen = true; render(); }
+    else if(action==='new-plan'){ state.ui.editPlanId=null; state.ui.planModalOpen = true; render(); }
+    else if(action==='edit-plan'){ state.ui.editPlanId = t.getAttribute('data-id'); state.ui.planModalOpen = true; render(); }
+    else if(action==='delete-plan'){ deletePlan(t.getAttribute('data-id')); }
+    else if(action==='admin-tab'){ state.adminTab = t.getAttribute('data-val'); render(); }
+    else if(action==='import-sample'){ importSampleData(); }
+    else if(action==='remove-chip'){ removeConfigItem(t.getAttribute('data-key'), t.getAttribute('data-val')); }
+  });
+
+  document.addEventListener('change', function(e){
+    var t = e.target;
+    if(t.matches('[data-filter]')){
+      state.filters[t.getAttribute('data-filter')] = t.value;
+      render();
+      if(t.getAttribute('data-filter')==='q'){
+        var el = document.querySelector('[data-filter="q"]');
+        if(el){ el.focus(); el.value = state.filters.q; el.setSelectionRange(el.value.length, el.value.length); }
+      }
+    } else if(t.matches('[data-action="year"]')){
+      state.year = Number(t.value); render();
+    }
+  });
+
+  document.addEventListener('input', function(e){
+    var t = e.target;
+    if(t.matches('[data-filter="q"]')){ state.filters.q = t.value; renderRegisterTableOnly(); }
+  });
+
+  function renderRegisterTableOnly(){
+    if(state.view!=='register') return;
+    var contentEl = document.querySelector('.content');
+    if(!contentEl) return;
+    var wrap = contentEl.querySelector('.table-wrap');
+    if(!wrap) return;
+    var list = filteredFindings();
+    var rows = '';
+    if(!list.length){ rows = '<tr class="empty-row"><td colspan="6">ไม่พบ Finding ตามเงื่อนไขที่เลือก</td></tr>'; }
+    else {
+      list.forEach(function(x){
+        rows += '<tr class="clickable" data-action="open-finding" data-id="'+esc(x.id)+'">'+
+          '<td class="mono">'+esc(x.findingNo)+'</td>'+
+          '<td><div class="cell-title">'+esc(x.title.length>60?x.title.slice(0,59)+'…':x.title)+'</div><div class="cell-sub">'+esc(planCode(x.planId))+' · '+esc(x.category)+'</div></td>'+
+          '<td>'+esc(x.department)+'</td>'+
+          '<td>'+riskBadge(x.riskLevel)+'</td>'+
+          '<td class="tabular">'+fmtDateThai(x.dueDate,{short:true})+'</td>'+
+          '<td>'+statusBadge(x.status)+' '+overdueBadge(x)+'</td>'+
+        '</tr>';
+      });
+    }
+    wrap.querySelector('tbody').innerHTML = rows;
+  }
+
+  document.addEventListener('submit', function(e){
+    var form = e.target.closest('[data-form]');
+    if(!form) return;
+    e.preventDefault();
+    var type = form.getAttribute('data-form');
+    var fd = new FormData(form);
+    if(type==='add-finding'){
+      var data = { planId:fd.get('planId'), findingNo:fd.get('findingNo'), title:fd.get('title'), description:fd.get('description'), department:fd.get('department'), category:fd.get('category'), riskLevel:fd.get('riskLevel'), dueDate:fd.get('dueDate'), owner:fd.get('owner') };
+      if(!data.planId || !data.title || !data.department || !data.riskLevel || !data.dueDate){ return; }
+      addFinding(data);
+      state.ui.addFindingOpen = false; render();
+    } else if(type==='progress'){
+      var findingId = form.getAttribute('data-id');
+      var note = fd.get('note');
+      if(!note) return;
+      var newDueDate = fd.get('newDueDate');
+      var reason = fd.get('reason');
+      if(newDueDate && !reason){ alert('กรุณาระบุเหตุผลการเลื่อนกำหนด'); return; }
+      addProgress(findingId, { note:note, status:fd.get('status')||'', newDueDate:newDueDate||'', reason:reason||'' });
+    } else if(type==='save-plan'){
+      var editId = form.getAttribute('data-edit-id') || null;
+      var pdata = { year:fd.get('year'), code:fd.get('code'), title:fd.get('title'), scope:fd.get('scope'), department:fd.get('department'), periodStart:fd.get('periodStart'), periodEnd:fd.get('periodEnd'), leadAuditor:fd.get('leadAuditor'), status:fd.get('status') };
+      savePlan(pdata, editId);
+      state.ui.planModalOpen = false; state.ui.editPlanId = null; render();
+    } else if(type==='add-chip'){
+      var key = form.getAttribute('data-key');
+      var val = (fd.get('val')||'').trim();
+      if(!val) return;
+      addConfigItem(key, val);
+      form.reset();
+    }
+  });
+
+  document.addEventListener('keydown', function(e){
+    if(e.key==='Escape'){
+      if(state.openFindingId){ state.openFindingId=null; render(); }
+      else if(state.ui.addFindingOpen||state.ui.planModalOpen){ state.ui.addFindingOpen=false; state.ui.planModalOpen=false; render(); }
+    }
+  });
+
+  /* ============================================================
+     BOOT
+     ============================================================ */
+  render(); // แสดงหน้าตั้งค่า/ลงชื่อเข้าใช้ทันที (ก่อนโหลดข้อมูลใดๆ)
+
+  if(!NEEDS_CONFIG){
+    initMsal();
+    msalInstance.handleRedirectPromise().then(function(){
+      var accounts = msalInstance.getAllAccounts();
+      if(accounts.length){
+        msalInstance.setActiveAccount(accounts[0]);
+        afterSignIn();
+      }
+    }).catch(function(e){ appState='error'; appError=e.message; render(); });
+  }
+
+})();
+</script>
+</body>
+</html>
